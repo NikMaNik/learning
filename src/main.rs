@@ -6,12 +6,14 @@ mod sm2;
 mod tui;
 
 use std::io::{self, Write};
+use std::path::PathBuf;
 use std::time::Duration;
 
+use anyhow::{Context, Result};
 use crossterm::event::{self, Event, KeyCode, KeyEventKind};
-use rusqlite::Connection;
-
 use models::{ActiveScreen, App, InputField};
+use rusqlite::Connection;
+use std::fs;
 
 fn remove_spaces(s: &str) -> String {
     s.chars().filter(|c| !c.is_whitespace()).collect()
@@ -40,6 +42,18 @@ fn restore_terminal() {
     let _ = stdout.flush();
 }
 
+fn created_learning_direction(project_name: &str) -> anyhow::Result<PathBuf> {
+    let mut path = dirs::home_dir().with_context(|| "Ошибка при определнии домашней директории")?;
+    println!("{:?}", path);
+    path.push(project_name);
+    println!("{:?}", path);
+    match fs::create_dir(&path) {
+        Ok(_) => return Ok(path),
+        Err(e) if e.kind() == io::ErrorKind::AlreadyExists => return Ok(path),
+        Err(_) => Err(anyhow::anyhow!("Ошибка")),
+    }
+}
+
 #[tokio::main]
 async fn main() -> Result<(), io::Error> {
     tracing_subscriber::fmt::init();
@@ -52,10 +66,15 @@ async fn main() -> Result<(), io::Error> {
 
     setup_terminal()?;
 
-    let mut terminal = ratatui::Terminal::new(ratatui::backend::CrosstermBackend::new(io::stdout()))?;
+    let mut terminal =
+        ratatui::Terminal::new(ratatui::backend::CrosstermBackend::new(io::stdout()))?;
     terminal.clear()?;
 
-    let conn = Connection::open("words.db").expect("Failed to open database");
+    let db_name = "words.db";
+    let mut path_project_db = created_learning_direction(".learning").unwrap();
+
+    path_project_db.push(db_name);
+    let conn = Connection::open(path_project_db).expect("Failed to open database");
     db::init_db(&conn).expect("Failed to init database");
 
     let api_conn = Connection::open("words.db").expect("Failed to open database for API");
