@@ -354,6 +354,19 @@ fn handle_upcoming(app: &mut App, key: KeyCode) {
                 app.selected -= 1;
             }
         }
+        KeyCode::PageDown => {
+            let len = app.upcoming_words.len();
+            app.selected = (app.selected + 10).min(len.saturating_sub(1));
+        }
+        KeyCode::PageUp => {
+            app.selected = app.selected.saturating_sub(10);
+        }
+        KeyCode::Home => {
+            app.selected = 0;
+        }
+        KeyCode::End => {
+            app.selected = app.upcoming_words.len().saturating_sub(1);
+        }
         KeyCode::Enter => {
             let input = app.upcoming_input.trim().to_string();
             if !input.is_empty() {

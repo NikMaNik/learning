@@ -2,7 +2,7 @@ use ratatui::{
     layout::{Constraint, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, List, ListItem, Paragraph, Wrap},
+    widgets::{Block, Borders, List, ListItem, ListState, Paragraph, Wrap},
     Frame,
 };
 
@@ -640,6 +640,9 @@ fn render_upcoming(frame: &mut Frame, app: &App, area: Rect) {
     let days_para = Paragraph::new(days_text).block(days_block);
     frame.render_widget(days_para, chunks[0]);
 
+    let list_items_height = chunks[1].height.saturating_sub(2) as usize;
+    let scroll_offset = app.selected.saturating_sub(list_items_height.saturating_sub(1));
+
     if app.upcoming_words.is_empty() {
         let no_words = vec![
             Line::from(""),
@@ -684,7 +687,10 @@ fn render_upcoming(frame: &mut Frame, app: &App, area: Rect) {
                 .borders(Borders::ALL)
                 .border_style(Style::default().fg(Color::Yellow)),
         );
-        frame.render_widget(list, chunks[1]);
+        let mut state = ListState::default()
+            .with_offset(scroll_offset)
+            .with_selected(Some(app.selected));
+        frame.render_stateful_widget(list, chunks[1], &mut state);
     }
 
     let help = vec![
@@ -704,6 +710,13 @@ fn render_upcoming(frame: &mut Frame, app: &App, area: Rect) {
                     .add_modifier(Modifier::BOLD),
             ),
             Span::raw(" — вверх  "),
+            Span::styled(
+                "PgDn/PgUp",
+                Style::default()
+                    .fg(Color::Magenta)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::raw(" — страница  "),
             Span::styled(
                 "Enter",
                 Style::default()
