@@ -62,8 +62,8 @@ fn split_separator(s: &str) -> Option<(&str, &str)> {
     }
 }
 
-pub fn read_file(path: &str) -> Result<String, std::io::Error> {
-    std::fs::read_to_string(path)
+pub fn read_file(path: &str) -> anyhow::Result<String> {
+    Ok(std::fs::read_to_string(path)?)
 }
 
 #[cfg(test)]

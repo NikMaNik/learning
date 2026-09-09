@@ -19,7 +19,7 @@ fn remove_spaces(s: &str) -> String {
     s.chars().filter(|c| !c.is_whitespace()).collect()
 }
 
-fn setup_terminal() -> io::Result<()> {
+fn setup_terminal() -> Result<()> {
     crossterm::terminal::enable_raw_mode()?;
     let mut stdout = io::stdout();
     crossterm::execute!(
@@ -55,7 +55,7 @@ fn created_learning_direction(project_name: &str) -> anyhow::Result<PathBuf> {
 }
 
 #[tokio::main]
-async fn main() -> Result<(), io::Error> {
+async fn main() -> Result<()> {
     tracing_subscriber::fmt::init();
 
     let original_hook = std::panic::take_hook();
@@ -106,7 +106,7 @@ async fn main() -> Result<(), io::Error> {
 fn run_app(
     terminal: &mut ratatui::Terminal<ratatui::backend::CrosstermBackend<io::Stdout>>,
     app: &mut App,
-) -> io::Result<()> {
+) -> Result<()> {
     loop {
         terminal.draw(|frame| tui::render(frame, app))?;
 
@@ -119,6 +119,8 @@ fn run_app(
                 match app.current_screen {
                     ActiveScreen::Main => handle_main(app, key.code),
                     ActiveScreen::Review => handle_review(app, key.code),
+                    ActiveScreen::Forgot => handle_forgot(app, key.code),
+                    ActiveScreen::Upcoming => handle_upcoming(app, key.code),
                     ActiveScreen::Add => handle_add(app, key.code),
                     ActiveScreen::Update => handle_update(app, key.code),
                     ActiveScreen::UpdateSearch => handle_update_search(app, key.code),
@@ -166,6 +168,18 @@ fn handle_main(app: &mut App, key: KeyCode) {
             app.refresh_words();
             app.current_screen = ActiveScreen::Delete;
             app.selected = 0;
+        }
+        KeyCode::Char('6') => {
+            app.clear_inputs();
+            app.refresh_forgotten_queue();
+            app.current_screen = ActiveScreen::Forgot;
+            app.current_word_index = 0;
+        }
+        KeyCode::Char('7') => {
+            app.clear_inputs();
+            app.upcoming_input = app.upcoming_days.to_string();
+            app.refresh_upcoming();
+            app.current_screen = ActiveScreen::Upcoming;
         }
         KeyCode::Char('q') => {
             app.should_quit = true;
@@ -249,6 +263,128 @@ fn handle_review(app: &mut App, key: KeyCode) {
     }
 }
 
+fn handle_forgot(app: &mut App, key: KeyCode) {
+    match key {
+        KeyCode::Esc => {
+            app.clear_inputs();
+            app.current_screen = ActiveScreen::Main;
+        }
+        KeyCode::Enter => {
+            if app.show_review_answer {
+                app.input_review.clear();
+                app.show_review_answer = false;
+
+                if app.current_word_index + 1 < app.forgotten_queue.len() {
+                    app.current_word_index += 1;
+                } else {
+                    app.refresh_forgotten_queue();
+                    if app.forgotten_queue.is_empty() {
+                        app.status_message = "Все забытые слова повторены!".to_string();
+                        app.status_is_error = false;
+                        app.current_screen = ActiveScreen::Main;
+                    }
+                }
+                return;
+            }
+
+            if let Some(word) = app.forgotten_queue.get(app.current_word_index).cloned() {
+                let user_answer = remove_spaces(&app.input_review);
+                let correct_answer = remove_spaces(&word.russian);
+
+                let distance = models::levenshtein_distance(&user_answer, &correct_answer);
+                let quality = models::distance_to_quality(distance, correct_answer.len());
+
+                let (new_interval, new_ef, new_reps) =
+                    sm2::calculate(quality, word.repetitions, word.ease_factor, word.interval);
+                let _ = db::save_review(&app.db, word.id, quality, new_interval, new_ef, new_reps);
+
+                app.last_quality = quality;
+                app.last_distance = distance;
+                app.last_next_interval = new_interval;
+
+                if quality >= 3 {
+                    app.status_message = format!(
+                        "Верно! (quality: {quality}/5) Следующее повторение через {new_interval} дн."
+                    );
+                    app.status_is_error = false;
+                } else {
+                    app.status_message = format!(
+                        "Почти! (quality: {quality}/5) Правильно: {} — {}",
+                        word.english, word.russian
+                    );
+                    app.status_is_error = true;
+                }
+                app.show_review_answer = true;
+            }
+        }
+        KeyCode::Tab => {
+            if app.current_word_index + 1 < app.forgotten_queue.len() {
+                app.current_word_index += 1;
+                app.input_review.clear();
+                app.show_review_answer = false;
+            } else {
+                app.status_message = "Нет больше забытых слов".to_string();
+                app.status_is_error = false;
+                app.current_screen = ActiveScreen::Main;
+            }
+        }
+        KeyCode::Char(c) => {
+            app.input_review.push(c);
+        }
+        KeyCode::Backspace => {
+            app.input_review.pop();
+        }
+        _ => {}
+    }
+}
+
+fn handle_upcoming(app: &mut App, key: KeyCode) {
+    match key {
+        KeyCode::Esc => {
+            app.clear_inputs();
+            app.current_screen = ActiveScreen::Main;
+        }
+        KeyCode::Char('j') | KeyCode::Down => {
+            if app.selected + 1 < app.upcoming_words.len() {
+                app.selected += 1;
+            }
+        }
+        KeyCode::Char('k') | KeyCode::Up => {
+            if app.selected > 0 {
+                app.selected -= 1;
+            }
+        }
+        KeyCode::Enter => {
+            let input = app.upcoming_input.trim().to_string();
+            if !input.is_empty() {
+                match input.parse::<i64>() {
+                    Ok(days) if days >= 0 => {
+                        app.upcoming_days = days;
+                        app.refresh_upcoming();
+                        app.selected = 0;
+                        app.status_message = format!("Показаны слова на ближайшие {days} дн.");
+                        app.status_is_error = false;
+                    }
+                    _ => {
+                        app.status_message = "Введи целое число дней (0-…)".to_string();
+                        app.status_is_error = true;
+                    }
+                }
+            } else {
+                app.status_message = "Введи число дней".to_string();
+                app.status_is_error = true;
+            }
+        }
+        KeyCode::Char(c) => {
+            app.upcoming_input.push(c);
+        }
+        KeyCode::Backspace => {
+            app.upcoming_input.pop();
+        }
+        _ => {}
+    }
+}
+
 fn handle_add(app: &mut App, key: KeyCode) {
     match key {
         KeyCode::Esc => {
@@ -262,8 +398,8 @@ fn handle_add(app: &mut App, key: KeyCode) {
             };
         }
         KeyCode::Enter => {
-            let english = remove_spaces(&app.input_english);
-            let russian = remove_spaces(&app.input_russian);
+            let english = app.input_english.trim().to_string();
+            let russian = app.input_russian.trim().to_string();
 
             if english.is_empty() || russian.is_empty() {
                 app.status_message = "Заполни оба поля".to_string();
@@ -402,8 +538,8 @@ fn handle_update_edit(app: &mut App, key: KeyCode) {
             };
         }
         KeyCode::Enter => {
-            let english = remove_spaces(&app.input_english);
-            let russian = remove_spaces(&app.input_russian);
+            let english = app.input_english.trim().to_string();
+            let russian = app.input_russian.trim().to_string();
 
             if english.is_empty() || russian.is_empty() {
                 app.status_message = "Заполни оба поля".to_string();

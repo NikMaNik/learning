@@ -11,12 +11,15 @@ pub struct Word {
     pub repetitions: i64,
     pub next_review: String,
     pub created_at: String,
+    pub last_quality: Option<i64>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum ActiveScreen {
     Main,
     Review,
+    Forgot,
+    Upcoming,
     Add,
     Update,
     UpdateSearch,
@@ -38,6 +41,10 @@ pub enum InputField {
 pub struct App {
     pub words: Vec<Word>,
     pub review_queue: Vec<Word>,
+    pub forgotten_queue: Vec<Word>,
+    pub upcoming_words: Vec<Word>,
+    pub upcoming_days: i64,
+    pub upcoming_input: String,
     pub current_word_index: usize,
     pub current_screen: ActiveScreen,
     pub selected: usize,
@@ -64,6 +71,10 @@ impl App {
         Self {
             words: Vec::new(),
             review_queue: Vec::new(),
+            forgotten_queue: Vec::new(),
+            upcoming_words: Vec::new(),
+            upcoming_days: 2,
+            upcoming_input: String::new(),
             current_word_index: 0,
             current_screen: ActiveScreen::Main,
             selected: 0,
@@ -100,6 +111,18 @@ impl App {
         }
     }
 
+    pub fn refresh_forgotten_queue(&mut self) {
+        if let Ok(queue) = crate::db::get_forgotten_words(&self.db) {
+            self.forgotten_queue = queue;
+        }
+    }
+
+    pub fn refresh_upcoming(&mut self) {
+        if let Ok(words) = crate::db::get_words_upcoming(&self.db, self.upcoming_days) {
+            self.upcoming_words = words;
+        }
+    }
+
     pub fn current_review_word(&self) -> Option<&Word> {
         self.review_queue.get(self.current_word_index)
     }
@@ -111,6 +134,7 @@ impl App {
         self.input_review.clear();
         self.search_query.clear();
         self.search_results.clear();
+        self.upcoming_input.clear();
         self.status_message.clear();
         self.status_is_error = false;
         self.show_review_answer = false;
@@ -123,6 +147,14 @@ impl App {
 
     pub fn words_for_review_count(&self) -> usize {
         self.review_queue.len()
+    }
+
+    pub fn forgotten_count(&self) -> usize {
+        self.forgotten_queue.len()
+    }
+
+    pub fn upcoming_count(&self) -> usize {
+        self.upcoming_words.len()
     }
 
     pub fn search_words(&mut self, query: &str) {
